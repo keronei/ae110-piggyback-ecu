@@ -14,5 +14,5 @@ The battery voltage is used to compute dwell for compensation purpose instead of
 
 ## Design descisions
 - IGT uses analog pin for interrupt because it helps in silencing excess noise on the line.
-- TC4424 is used as the coild driver bacause of noise immunity, currently two channels of a single IC are used to drive one coil for prolonged perfomance.
+- TC4424 is used as the coil driver bacause of noise immunity, currently two channels of a single IC are used to drive one coil for prolonged perfomance.
 

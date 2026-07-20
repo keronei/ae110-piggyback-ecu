@@ -138,6 +138,7 @@ void validateSync() {
 volatile unsigned long lastEdgeMicros = 0;
 volatile unsigned int igtCountRejected = 0;
 volatile unsigned int igtCountDeadTime = 0;
+volatile unsigned int igtWhileUnsynced = 0;
 
 static uint32_t lastIGF = 0;
 
@@ -151,7 +152,7 @@ void onIGTRising(void) {
 
   if (syncState != SYNCED) {
 
-    simpletx("Prob!\n");
+    igtWhileUnsynced++;
     return;
   }
 
@@ -199,7 +200,7 @@ void onIGTRising(void) {
     TIMSK1 |= (1 << OCIE1A);
     TCCR1B = (1 << WGM12) | (1 << CS11);  // Start Timer1 with prescaler 8
 
-    ignore_igt_until = lastDwellRequestMicros + 3200;
+    ignore_igt_until = lastDwellRequestMicros + currentDwellUs + 300;
 
   } else {
     // Find a way to compensate for the miss here - spoils the whole flow if one is missed.
@@ -402,6 +403,8 @@ void setupTimer3() {
 int startup = 0;
 
 void setup(void) {
+  wdt_disable();
+
   pinMode(15, INPUT_PULLUP);
   pinMode(7, OUTPUT);
 
@@ -415,7 +418,6 @@ void setup(void) {
 
   // --- A9 (PK1) as input with optional pull-up ---
   DDRK &= ~(1 << 1);  // input
-  //PORTK |= (1 << 1);       // enable pull-up (optional)
 
   // --- Enable PCINT on PORTK ---
   PCICR |= (1 << PCIE2);     // enable PCINT for PORTK
@@ -484,6 +486,8 @@ void setup(void) {
       startup++;
   }
 
+  wdt_enable(WDTO_250MS);
+
 } /* void setup (void) */
 
 volatile bool syncIsLit = false;
@@ -522,12 +526,8 @@ void loop(void) {
     simpletx(inttochar(synccount, myBuffer, sizeof(myBuffer)));
     simpletx(", ");
 
-    simpletx("IsAc: ");
-    if(g_coil_trigger_active){
-    simpletx("True");
-    } else {
-      simpletx("False");
-    }
+    simpletx("igtWhileUnsynced: ");
+    simpletx(inttochar(igtWhileUnsynced, myBuffer, sizeof(myBuffer)));
     simpletx(", ");
 
     simpletx("Total: ");
@@ -571,15 +571,20 @@ void loop(void) {
 
   if (syncState != WAITING_FOR_EDGE) {
     if ((elapsedMicroseconds(lastEdgeTime) > 500000) && (elapsedMicroseconds(last_igt_time) > 1000000)) {  // 0.5 sec && 1 sec
+      cli();
       syncState = WAITING_FOR_EDGE;
       validEdgeCount = 0;
       igtcountmiss = 0;
       synccount = 0;
       igtCountRejected = 0;
+      igtWhileUnsynced = 0;
       igtCountDeadTime = 0;
       g_coil_trigger_active = false;
-      TCCR1B = 0;  // stop Timer1
+      TCCR1B = 0;
       TCNT1 = 0;
+      PORTC &= ~((1 << PC7) | (1 << PC5) | (1 << PC3));
+      PORTD &= ~(1 << PD7);
+      sei();
     }
   }
 
@@ -587,10 +592,10 @@ void loop(void) {
     if (elapsedMicroseconds(lastEdgeTime) > 60000000) {
       simpletx("Entering sleep...\n");
       system_sleep();  //system PowerDown mode to save power
-      nextCoilToFire = 0;
     }
   }
-
+  
+  wdt_reset();
 } /* loop (void) */
 
 
@@ -730,9 +735,6 @@ void init2() {
   // set timer 2 prescale factor to 64
   TCCR2B = 1 << CS22;
 
-
-  //      TCCR2A=TCCR0A;
-  //      TCCR2B=TCCR0B;
   // enable timer 2 overflow interrupt
   TIMSK2 |= 1 << TOIE2;
   // disable timer 0 overflow interrupt

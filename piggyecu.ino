@@ -242,26 +242,26 @@ ISR(PCINT2_vect) {
   lastPINK = current;
 }
 
-#define PIN15_BIT (1 << 0)  // PJ0
-//attach the vss/buttons interrupt
-ISR(PCINT1_vect) {
-  static uint8_t lastPINJ = 0;
-  uint8_t current = PINJ;
+#define PIN53_BIT (1 << 0)  // PB0
 
-  uint8_t changed = current ^ lastPINJ;
-  lastPINJ = current;
+ISR(PCINT0_vect) {
+  static uint8_t lastPINB = 0;
+  uint8_t current = PINB;
 
-  if (changed & PIN15_BIT) {
-    if (current & PIN15_BIT) {
-      // pin 15 is now HIGH
+  uint8_t changed = current ^ lastPINB;
+  lastPINB = current;
+
+  // Check if Pin 53 state has changed
+  if (changed & PIN53_BIT) {
+    if (current & PIN53_BIT) {
+      // Pin 53 is now HIGH
       onCPSChange();
     } else {
-      // pin 15 is now LOW
+      // Pin 53 is now LOW
       onCPSChange();
     }
   }
-
-} /* ISR(PCINT1_vect) */
+}
 
 
 void onCPSChange() {
@@ -406,6 +406,7 @@ void setup(void) {
   wdt_disable();
 
   pinMode(15, INPUT_PULLUP);
+  pinMode(14, INPUT_PULLUP);
   pinMode(7, OUTPUT);
 
   pinMode(SYNC_STATE_IND, OUTPUT);
@@ -428,8 +429,11 @@ void setup(void) {
 
   PCMSK2 |= (1 << PCINT16);
 
-  PCICR |= (1 << PCIE1);    // enable PCINT for PORTJ
-  PCMSK1 |= (1 << PCINT9);  // enable PCINT on pin 15 (PJ0)
+PCICR |= (1 << PCIE0);
+  //PCICR |= (1 << PCIE1);    // enable PCINT for PORTJ
+  //PCMSK1 |= (1 << PCINT9);  // enable PCINT on pin 15 (PJ0)
+  PCMSK0 |= (1 << PCINT0);
+  PCMSK1 |= (1 << PCINT10);
 
 
   String resetCauseString = getResetCause();  // Get the String object
@@ -591,7 +595,9 @@ void loop(void) {
   if (syncState == WAITING_FOR_EDGE) {
     if (elapsedMicroseconds(lastEdgeTime) > 60000000) {
       simpletx("Entering sleep...\n");
+      wdt_disable(); 
       system_sleep();  //system PowerDown mode to save power
+      wdt_enable(WDTO_250MS); 
     }
   }
   

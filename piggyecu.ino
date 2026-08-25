@@ -1,6 +1,6 @@
 #include <avr/pgmspace.h>
 #include <EEPROM.h>
-#include <avr/wdt.h>
+//#include <avr/wdt.h>
 
 #include <avr/sleep.h>
 
@@ -403,38 +403,20 @@ void setupTimer3() {
 int startup = 0;
 
 void setup(void) {
-  wdt_disable();
+  //wdt_disable();
 
-  pinMode(15, INPUT_PULLUP);
-  pinMode(14, INPUT_PULLUP);
   pinMode(7, OUTPUT);
 
   pinMode(SYNC_STATE_IND, OUTPUT);
-  // --- A10 (PK2) and A11 (PK3) as inputs ---
-  DDRK &= ~((1 << 2) | (1 << 3));  // inputs
-  PORTK |= (1 << 3);               // optional pull-ups
 
-  // --- Enable PCINT on PORTK ---
-  PCMSK2 |= (1 << PCINT18) | (1 << PCINT19);  // A10 + A11
+  // --- A10 (PK2) = IGT input ---
+  DDRK &= ~(1 << 2);          // input
+  PCMSK2 |= (1 << PCINT18);   // enable PCINT for A10
+  PCICR |= (1 << PCIE2);      // enable PCINT for PORTK
 
-  // --- A9 (PK1) as input with optional pull-up ---
-  DDRK &= ~(1 << 1);  // input
-
-  // --- Enable PCINT on PORTK ---
-  PCICR |= (1 << PCIE2);     // enable PCINT for PORTK
-  PCMSK2 |= (1 << PCINT17);  // enable PCINT for A9
-
-  // A8 = PK0 = PCINT16
-  DDRK &= ~(1 << 0);  // input
-
-  PCMSK2 |= (1 << PCINT16);
-
-PCICR |= (1 << PCIE0);
-  //PCICR |= (1 << PCIE1);    // enable PCINT for PORTJ
-  //PCMSK1 |= (1 << PCINT9);  // enable PCINT on pin 15 (PJ0)
-  PCMSK0 |= (1 << PCINT0);
-  PCMSK1 |= (1 << PCINT10);
-
+  // --- Pin 53 (PB0) = SYNC input ---
+  PCICR |= (1 << PCIE0);      // enable PCINT for PORTB
+  PCMSK0 |= (1 << PCINT0);    // enable PCINT for pin 53
 
   String resetCauseString = getResetCause();  // Get the String object
   const char *resetCauseChar = resetCauseString.c_str();
@@ -464,8 +446,6 @@ PCICR |= (1 << PCIE0);
 
   init2();
 
-  PCMSK1 |= (1 << (PCINT11 - 8)) | (1 << (PCINT12 - 8));
-
   // Software interrupt for dwell time
   // --- Configure Timer1 for Compare Match A interrupt ---
   // 1. Stop Timer1 (clear prescaler bits)
@@ -490,7 +470,7 @@ PCICR |= (1 << PCIE0);
       startup++;
   }
 
-  wdt_enable(WDTO_250MS);
+  //wdt_enable(WDTO_250MS);
 
 } /* void setup (void) */
 
@@ -595,13 +575,13 @@ void loop(void) {
   if (syncState == WAITING_FOR_EDGE) {
     if (elapsedMicroseconds(lastEdgeTime) > 60000000) {
       simpletx("Entering sleep...\n");
-      wdt_disable(); 
+      //wdt_disable(); 
       system_sleep();  //system PowerDown mode to save power
-      wdt_enable(WDTO_250MS); 
+      //wdt_enable(WDTO_250MS); 
     }
   }
   
-  wdt_reset();
+  //wdt_reset();
 } /* loop (void) */
 
 

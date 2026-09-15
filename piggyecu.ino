@@ -6,6 +6,11 @@
 
 #define myubbr (16000000 / 16 / 9600 - 1)
 
+// Set to 1 to run the raw IGT dwell-logging test (see loop()).
+// This swaps the normal heartbeat debug line for RPM/VB/RawDwell/CalcDwell
+// samples and does not touch the firing/sync logic.
+#define CFG_RAW_IGT_LOG 1
+
 volatile unsigned long timer2_overflow_count;
 
 volatile float vbatt_filtered = 12.0;  // initial guess (safe)
@@ -146,6 +151,21 @@ volatile unsigned long ignore_igt_until = 0;
 #define IGT_MIN_DEBOUNCE_US 500   // tune: 150..500
 #define IGT_STABLE_VERIFY_US 120  // verify signal still high after N us
 
+// --- Raw IGT logging (test mode) ---
+// Captures the REAL rise/fall of the stock IGT signal, completely separate
+// from the control-path variables above (lastEdgeMicros, ignore_igt_until,
+// etc.) so this instrumentation can never influence firing behaviour.
+volatile unsigned long rawRiseTime = 0;      // time of most recent rising edge
+volatile unsigned long rawPrevRiseTime = 0;  // time of the rising edge before that (for RPM)
+volatile unsigned long rawDwellUs = 0;       // most recent real fall - rise (stock dwell)
+
+// --- TEMPORARY: pin down the CalcDwell=4000 anomaly ---
+// Captures the exact raw ADC count and vbat value at the moment they're
+// handed to lookupDwellUs(), so we can see whether the input to that call
+// really matches what gets printed as VB. Remove once resolved.
+volatile int dbgRawADC = 0;
+volatile float dbgVbatArg = 0;
+
 
 void onIGTRising(void) {
   allgtcount++;
@@ -229,9 +249,19 @@ ISR(PCINT2_vect) {
   if (changed & (1 << 2)) {
     if (current & (1 << 2)) {
       // A10 is now HIGH (rising edge)
+#if CFG_RAW_IGT_LOG
+      unsigned long rawNow = microSeconds();
+      rawPrevRiseTime = rawRiseTime;
+      rawRiseTime = rawNow;
+#endif
       onIGTRising();
     } else {
       // A10 is now LOW (falling edge)
+#if CFG_RAW_IGT_LOG
+      if (rawRiseTime != 0) {
+        rawDwellUs = elapsedMicroseconds(rawRiseTime);//microSeconds() - rawRiseTime;
+      }
+#endif
       if (syncState != SYNCED) {
         // launch fake IGF because firing hasn't begun
         startTimer3_us(500);
@@ -502,6 +532,34 @@ void loop(void) {
 
 #if (CFG_SERIAL_TX == 1)
 
+#if CFG_RAW_IGT_LOG
+    // Snapshot ISR-written values atomically (they're touched from
+    // ISR(PCINT2_vect), so a plain read here could tear).
+    cli();
+    unsigned long riseSample = rawRiseTime;
+    unsigned long prevRiseSample = rawPrevRiseTime;
+    unsigned long dwellSample = rawDwellUs;
+    sei();
+
+    unsigned long intervalUs = elapsedMicroseconds(prevRiseSample, riseSample);
+    unsigned long rpm = (intervalUs > 0) ? (30000000UL / intervalUs) : 0;
+
+    simpletx("RPM: ");
+    simpletx(inttochar(rpm, myBuffer, sizeof(myBuffer)));
+    simpletx(", VB: ");
+    simpletx(format(vbatt_filtered * 1000.0f));
+    simpletx(", RawDwell: ");
+    simpletx(inttochar(dwellSample, myBuffer, sizeof(myBuffer)));
+    simpletx(", CalcDwell: ");
+    simpletx(inttochar(currentDwellUs, myBuffer, sizeof(myBuffer)));
+    simpletx(", ADCraw: ");
+    simpletx(inttochar(dbgRawADC, myBuffer, sizeof(myBuffer)));
+    simpletx(", VBatArg: ");
+    simpletx(format(dbgVbatArg * 1000.0f));
+    simpletx("\n");
+
+#else
+
     simpletx(" volRef: ");
     simpletx(format(vbatt_filtered * 1000.0f));
     simpletx(", ");
@@ -532,6 +590,8 @@ void loop(void) {
 
 #endif
 
+#endif
+
     lastHeartBeat = microSeconds();
   }
 
@@ -544,6 +604,11 @@ void loop(void) {
 
   if (elapsedMicroseconds(lastBatCheck) > 10000) {
     updateBatteryFiltered();
+
+#if CFG_RAW_IGT_LOG
+    dbgRawADC = analogRead(A3);
+    dbgVbatArg = vbatt_filtered;
+#endif
 
     cli();
     float dwell = lookupDwellUs(vbatt_filtered);  // microseconds
@@ -659,7 +724,12 @@ unsigned long lookupDwellUs(float vbat) {
   unsigned long d1 = dwell_us[i + 1];
 
   float t = (vbat - v0) / (v1 - v0);  // 0..1
-  float dwe = d0 + t * (d1 - d0);
+  // d1 is usually SMALLER than d0 (dwell decreases as voltage rises).
+  // Cast to float before subtracting - d1/d0 are unsigned long, and
+  // (d1 - d0) as unsigned arithmetic underflows/wraps to a huge value
+  // whenever d1 < d0, which was silently getting clamped to DWELL_MAX_US
+  // on every mid-table lookup.
+  float dwe = (float)d0 + t * ((float)d1 - (float)d0);
   unsigned long d = (unsigned long)(dwe + 0.5f);
 
   // clamp just in case
